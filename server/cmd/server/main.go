@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 	"timewise/internal/database"
 	"timewise/internal/user"
 	"timewise/internal/vars"
 	"timewise/timewise/pb"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -24,16 +26,32 @@ func main() {
 	server := grpc.NewServer()
 	pb.RegisterUserServiceServer(server, user.NewUserServiceServer(db))
 
-	// Включаем отражение
-	reflection.Register(server)
-
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", vars.PORT))
 	if err != nil {
 		log.Fatalf("Не удалось начать прослушивание на порту %s: %v", vars.PORT, err)
 	}
 
-	log.Printf("GRPC сервер запущен на порту %s...\n", vars.PORT)
-	if err := server.Serve(lis); err != nil {
-		log.Fatalf("Ошибка запуска сервера: %v", err)
-	}
+	//@ Run server
+	runServer(server, lis)
+}
+
+func runServer(server *grpc.Server, lis net.Listener) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		log.Printf("GRPC сервер запущен на порту %s...\n", vars.PORT)
+		if err := server.Serve(lis); err != nil {
+			log.Fatalf("Ошибка запуска сервера: %v", err)
+		}
+	}()
+
+	<-stop
+	log.Println("Получен сигнал завершения, выключение сервера...")
+	shutdownServer(server)
+}
+
+func shutdownServer(server *grpc.Server) {
+	server.GracefulStop()
+	log.Println("Сервер выключен")
 }
